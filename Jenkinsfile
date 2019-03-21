@@ -90,6 +90,89 @@ pipeline {
         }
       }
     }
+    stage('Staging Warm Up') {
+
+      steps {
+
+        echo "Waiting for the service to start..."
+
+        container('kubectl') {
+
+          script {
+
+            def result=1
+
+            def i=0
+
+            while (result!=0 && i < 30) {
+
+              //command will return status code 1 if deployment is not ready
+
+              result=sh(script: "kubectl -n staging rollout status deployment ${env.APP_NAME} --timeout=10s", returnStatus: true)
+
+              i++;
+
+            }
+
+            // If we reach the end of the loop (5mins) and the deployment is still not ready, Fail the build
+
+            if(result!=0) {
+
+              currentBuild.result = 'FAILED'
+
+              error "Error while waiting for ${env.APP_NAME} deployment to become available."
+
+            }
+
+          }
+
+        }
+
+        echo "Running one iteration with one VU to warm up service" 
+
+        container('jmeter') {
+
+          script {
+
+            def status = executeJMeter (
+
+              scriptName: "jmeter/front-end_e2e_load.jmx",
+
+              resultsDir: "e2eCheck_${env.APP_NAME}_warmup",
+
+              serverUrl: "front-end.staging",
+
+              serverPort: 8080,
+
+              checkPath: '/health',
+
+              vuCount: 1,
+
+              loopCount: 1,
+
+              LTN: "e2eCheck_${BUILD_NUMBER}_warmup",
+
+              funcValidation: false,
+
+              avgRtValidation: 4000
+
+            )
+
+            if (status != 0) {
+
+              currentBuild.result = 'FAILED'
+
+              error "Warm up round in staging failed."
+
+            }
+
+          }
+
+        }
+
+      }
+
+    }
     stage('Run health check in dev') {
       when {
         expression {
